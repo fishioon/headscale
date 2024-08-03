@@ -38,6 +38,13 @@ const (
 	IPAllocationStrategyRandom     IPAllocationStrategy = "random"
 )
 
+type PolicyMode string
+
+const (
+	PolicyModeDB   = "database"
+	PolicyModeFile = "file"
+)
+
 // Config contains the initial Headscale configuration.
 type Config struct {
 	ServerURL                      string
@@ -63,7 +70,8 @@ type Config struct {
 	ACMEURL   string
 	ACMEEmail string
 
-	DNSConfig *tailcfg.DNSConfig
+	DNSConfig             *tailcfg.DNSConfig
+	DNSUserNameInMagicDNS bool
 
 	UnixSocket           string
 	UnixSocketPermission fs.FileMode
@@ -75,13 +83,14 @@ type Config struct {
 
 	CLI CLIConfig
 
-	ACL ACLConfig
+	Policy PolicyConfig
 
 	Tuning Tuning
 }
 
 type SqliteConfig struct {
-	Path string
+	Path          string
+	WriteAheadLog bool
 }
 
 type PostgresConfig struct {
@@ -161,8 +170,9 @@ type CLIConfig struct {
 	Insecure bool
 }
 
-type ACLConfig struct {
-	PolicyPath string
+type PolicyConfig struct {
+	Path string
+	Mode PolicyMode
 }
 
 type LogConfig struct {
@@ -195,6 +205,8 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
+	viper.SetDefault("policy.mode", "file")
+
 	viper.SetDefault("tls_letsencrypt_cache_dir", "/var/www/.cache")
 	viper.SetDefault("tls_letsencrypt_challenge_type", HTTP01ChallengeType)
 
@@ -203,6 +215,7 @@ func LoadConfig(path string, isFile bool) error {
 
 	viper.SetDefault("dns_config", nil)
 	viper.SetDefault("dns_config.override_local_dns", true)
+	viper.SetDefault("dns_config.use_username_in_magic_dns", false)
 
 	viper.SetDefault("derp.server.enabled", false)
 	viper.SetDefault("derp.server.stun.enabled", true)
@@ -221,6 +234,8 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("database.postgres.max_open_conns", 10)
 	viper.SetDefault("database.postgres.max_idle_conns", 10)
 	viper.SetDefault("database.postgres.conn_max_idle_time_secs", 3600)
+
+	viper.SetDefault("database.sqlite.write_ahead_log", true)
 
 	viper.SetDefault("oidc.scope", []string{oidc.ScopeOpenID, "profile", "email"})
 	viper.SetDefault("oidc.strip_email_domain", true)
@@ -248,6 +263,13 @@ func LoadConfig(path string, isFile bool) error {
 
 		return fmt.Errorf("fatal error reading config file: %w", err)
 	}
+
+	// Register aliases for backward compatibility
+	// Has to be called _after_ viper.ReadInConfig()
+	// https://github.com/spf13/viper/issues/560
+
+	// Alias the old ACL Policy path with the new configuration option.
+	registerAliasAndDeprecate("policy.path", "acl_policy_path")
 
 	// Collect any validation errors and return them all at once
 	var errorText string
@@ -385,11 +407,13 @@ func GetLogTailConfig() LogTailConfig {
 	}
 }
 
-func GetACLConfig() ACLConfig {
-	policyPath := viper.GetString("acl_policy_path")
+func GetPolicyConfig() PolicyConfig {
+	policyPath := viper.GetString("policy.path")
+	policyMode := viper.GetString("policy.mode")
 
-	return ACLConfig{
-		PolicyPath: policyPath,
+	return PolicyConfig{
+		Path: policyPath,
+		Mode: PolicyMode(policyMode),
 	}
 }
 
@@ -443,6 +467,7 @@ func GetDatabaseConfig() DatabaseConfig {
 			Path: util.AbsolutePathFromConfigPath(
 				viper.GetString("database.sqlite.path"),
 			),
+			WriteAheadLog: viper.GetBool("database.sqlite.write_ahead_log"),
 		},
 		Postgres: PostgresConfig{
 			Host:               viper.GetString("database.postgres.host"),
@@ -533,16 +558,6 @@ func GetDNSConfig() (*tailcfg.DNSConfig, string) {
 			}
 		}
 
-		if viper.IsSet("dns_config.domains") {
-			domains := viper.GetStringSlice("dns_config.domains")
-			if len(dnsConfig.Resolvers) > 0 {
-				dnsConfig.Domains = domains
-			} else if domains != nil {
-				log.Warn().
-					Msg("Warning: dns_config.domains is set, but no nameservers are configured. Ignoring domains.")
-			}
-		}
-
 		if viper.IsSet("dns_config.extra_records") {
 			var extraRecords []tailcfg.DNSRecord
 
@@ -568,8 +583,18 @@ func GetDNSConfig() (*tailcfg.DNSConfig, string) {
 			baseDomain = "headscale.net" // does not really matter when MagicDNS is not enabled
 		}
 
-		log.Trace().Interface("dns_config", dnsConfig).Msg("DNS configuration loaded")
+		if !viper.GetBool("dns_config.use_username_in_magic_dns") {
+			dnsConfig.Domains = []string{baseDomain}
+		} else {
+			log.Warn().Msg("DNS: Usernames in DNS has been deprecated, this option will be remove in future versions")
+			log.Warn().Msg("DNS: see 0.23.0 changelog for more information.")
+		}
 
+		if domains := viper.GetStringSlice("dns_config.domains"); len(domains) > 0 {
+			dnsConfig.Domains = append(dnsConfig.Domains, domains...)
+		}
+
+		log.Trace().Interface("dns_config", dnsConfig).Msg("DNS configuration loaded")
 		return dnsConfig, baseDomain
 	}
 
@@ -590,7 +615,6 @@ func PrefixV4() (*netip.Prefix, error) {
 
 	builder := netipx.IPSetBuilder{}
 	builder.AddPrefix(tsaddr.CGNATRange())
-	builder.AddPrefix(tsaddr.TailscaleULARange())
 	ipSet, _ := builder.IPSet()
 	if !ipSet.ContainsPrefix(prefixV4) {
 		log.Warn().
@@ -614,7 +638,6 @@ func PrefixV6() (*netip.Prefix, error) {
 	}
 
 	builder := netipx.IPSetBuilder{}
-	builder.AddPrefix(tsaddr.CGNATRange())
 	builder.AddPrefix(tsaddr.TailscaleULARange())
 	ipSet, _ := builder.IPSet()
 
@@ -712,7 +735,8 @@ func GetHeadscaleConfig() (*Config, error) {
 
 		TLS: GetTLSConfig(),
 
-		DNSConfig: dnsConfig,
+		DNSConfig:             dnsConfig,
+		DNSUserNameInMagicDNS: viper.GetBool("dns_config.use_username_in_magic_dns"),
 
 		ACMEEmail: viper.GetString("acme_email"),
 		ACMEURL:   viper.GetString("acme_url"),
@@ -754,7 +778,7 @@ func GetHeadscaleConfig() (*Config, error) {
 		LogTail:             logTailConfig,
 		RandomizeClientPort: randomizeClientPort,
 
-		ACL: GetACLConfig(),
+		Policy: GetPolicyConfig(),
 
 		CLI: CLIConfig{
 			Address:  viper.GetString("cli.address"),
@@ -776,4 +800,21 @@ func GetHeadscaleConfig() (*Config, error) {
 
 func IsCLIConfigured() bool {
 	return viper.GetString("cli.address") != "" && viper.GetString("cli.api_key") != ""
+}
+
+// registerAliasAndDeprecate will register an alias between the newKey and the oldKey,
+// and log a deprecation warning if the oldKey is set.
+func registerAliasAndDeprecate(newKey, oldKey string) {
+	// NOTE: RegisterAlias is called with NEW KEY -> OLD KEY
+	viper.RegisterAlias(newKey, oldKey)
+	if viper.IsSet(oldKey) {
+		log.Warn().Msgf("The %q configuration key is deprecated. Please use %q instead. %q will be removed in the future.", oldKey, newKey, oldKey)
+	}
+}
+
+// deprecateAndFatal will log a fatal deprecation warning if the oldKey is set.
+func deprecateAndFatal(newKey, oldKey string) {
+	if viper.IsSet(oldKey) {
+		log.Fatal().Msgf("The %q configuration key is deprecated. Please use %q instead. %q has been removed.", oldKey, newKey, oldKey)
+	}
 }

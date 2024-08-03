@@ -222,7 +222,7 @@ func DeleteRoute(
 			return nil, err
 		}
 
-		routesToDelete := types.Routes{}
+		var routesToDelete types.Routes
 		for _, r := range routes {
 			if r.IsExitRoute() {
 				routesToDelete = append(routesToDelete, r)
@@ -542,7 +542,6 @@ func failoverRoute(
 	isLikelyConnected *xsync.MapOf[types.NodeID, bool],
 	routeToReplace *types.Route,
 	altRoutes types.Routes,
-
 ) *failover {
 	if routeToReplace == nil {
 		return nil
@@ -623,7 +622,7 @@ func EnableAutoApprovedRoutes(
 
 	log.Trace().Interface("routes", routes).Msg("routes for autoapproving")
 
-	approvedRoutes := types.Routes{}
+	var approvedRoutes types.Routes
 
 	for _, advertisedRoute := range routes {
 		if advertisedRoute.Enabled {

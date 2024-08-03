@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,7 +57,6 @@ func (h *Headscale) initOIDC() error {
 	// grab oidc config if it hasn't been already
 	if h.oauth2Config == nil {
 		h.oidcProvider, err = oidc.NewProvider(context.Background(), h.cfg.OIDC.Issuer)
-
 		if err != nil {
 			return fmt.Errorf("creating OIDC provider from issuer config: %w", err)
 		}
@@ -365,7 +365,7 @@ func validateOIDCAllowedDomains(
 ) error {
 	if len(allowedDomains) > 0 {
 		if at := strings.LastIndex(claims.Email, "@"); at < 0 ||
-			!util.IsStringInSlice(allowedDomains, claims.Email[at+1:]) {
+			!slices.Contains(allowedDomains, claims.Email[at+1:]) {
 			log.Trace().Msg("authenticated principal does not match any allowed domain")
 
 			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -393,7 +393,7 @@ func validateOIDCAllowedGroups(
 ) error {
 	if len(allowedGroups) > 0 {
 		for _, group := range allowedGroups {
-			if util.IsStringInSlice(claims.Groups, group) {
+			if slices.Contains(claims.Groups, group) {
 				return nil
 			}
 		}
@@ -420,7 +420,7 @@ func validateOIDCAllowedUsers(
 	claims *IDTokenClaims,
 ) error {
 	if len(allowedUsers) > 0 &&
-		!util.IsStringInSlice(allowedUsers, claims.Email) {
+		!slices.Contains(allowedUsers, claims.Email) {
 		log.Trace().Msg("authenticated principal does not match any allowed user")
 		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		writer.WriteHeader(http.StatusBadRequest)

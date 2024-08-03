@@ -43,7 +43,6 @@ func (s *Suite) TestGetMapResponseUserProfiles(c *check.C) {
 		types.Nodes{
 			nodeInShared2, nodeInShared3, node2InShared1,
 		},
-		"",
 	)
 
 	c.Assert(len(userProfiles), check.Equals, 3)
@@ -127,7 +126,10 @@ func TestDNSConfigMapResponse(t *testing.T) {
 			}
 
 			got := generateDNSConfig(
-				&dnsConfigOrig,
+				&types.Config{
+					DNSConfig:             &dnsConfigOrig,
+					DNSUserNameInMagicDNS: true,
+				},
 				baseDomain,
 				nodeInShared1,
 				peersOfNodeInShared1,
@@ -187,9 +189,9 @@ func Test_fullMapResponse(t *testing.T) {
 		UserID:     0,
 		User:       types.User{Name: "mini"},
 		ForcedTags: []string{},
-		AuthKey:     &types.PreAuthKey{},
-		LastSeen:    &lastSeen,
-		Expiry:      &expire,
+		AuthKey:    &types.PreAuthKey{},
+		LastSeen:   &lastSeen,
+		Expiry:     &expire,
 		Hostinfo:   &tailcfg.Hostinfo{},
 		Routes: []types.Route{
 			{

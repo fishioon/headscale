@@ -10,6 +10,7 @@ type ControlServer interface {
 	SaveLog(string) error
 	SaveProfile(string) error
 	Execute(command []string) (string, error)
+	WriteFile(path string, content []byte) error
 	ConnectToNetwork(network *dockertest.Network) error
 	GetHealthEndpoint() string
 	GetEndpoint() string

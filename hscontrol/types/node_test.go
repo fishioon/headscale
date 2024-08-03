@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -126,11 +127,87 @@ func TestNodeFQDN(t *testing.T) {
 	tests := []struct {
 		name    string
 		node    Node
-		dns     tailcfg.DNSConfig
+		cfg     Config
 		domain  string
 		want    string
 		wantErr string
 	}{
+		{
+			name: "all-set-with-username",
+			node: Node{
+				GivenName: "test",
+				User: User{
+					Name: "user",
+				},
+			},
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: true,
+				},
+				DNSUserNameInMagicDNS: true,
+			},
+			domain: "example.com",
+			want:   "test.user.example.com",
+		},
+		{
+			name: "no-given-name-with-username",
+			node: Node{
+				User: User{
+					Name: "user",
+				},
+			},
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: true,
+				},
+				DNSUserNameInMagicDNS: true,
+			},
+			domain:  "example.com",
+			wantErr: "failed to create valid FQDN: node has no given name",
+		},
+		{
+			name: "no-user-name-with-username",
+			node: Node{
+				GivenName: "test",
+				User:      User{},
+			},
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: true,
+				},
+				DNSUserNameInMagicDNS: true,
+			},
+			domain:  "example.com",
+			wantErr: "failed to create valid FQDN: node user has no name",
+		},
+		{
+			name: "no-magic-dns-with-username",
+			node: Node{
+				GivenName: "test",
+				User: User{
+					Name: "user",
+				},
+			},
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: false,
+				},
+				DNSUserNameInMagicDNS: true,
+			},
+			domain: "example.com",
+			want:   "test",
+		},
+		{
+			name: "no-dnsconfig-with-username",
+			node: Node{
+				GivenName: "test",
+				User: User{
+					Name: "user",
+				},
+			},
+			domain: "example.com",
+			want:   "test",
+		},
 		{
 			name: "all-set",
 			node: Node{
@@ -139,11 +216,14 @@ func TestNodeFQDN(t *testing.T) {
 					Name: "user",
 				},
 			},
-			dns: tailcfg.DNSConfig{
-				Proxied: true,
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: true,
+				},
+				DNSUserNameInMagicDNS: false,
 			},
 			domain: "example.com",
-			want:   "test.user.example.com",
+			want:   "test.example.com",
 		},
 		{
 			name: "no-given-name",
@@ -152,8 +232,11 @@ func TestNodeFQDN(t *testing.T) {
 					Name: "user",
 				},
 			},
-			dns: tailcfg.DNSConfig{
-				Proxied: true,
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: true,
+				},
+				DNSUserNameInMagicDNS: false,
 			},
 			domain:  "example.com",
 			wantErr: "failed to create valid FQDN: node has no given name",
@@ -164,11 +247,14 @@ func TestNodeFQDN(t *testing.T) {
 				GivenName: "test",
 				User:      User{},
 			},
-			dns: tailcfg.DNSConfig{
-				Proxied: true,
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: true,
+				},
+				DNSUserNameInMagicDNS: false,
 			},
-			domain:  "example.com",
-			wantErr: "failed to create valid FQDN: node user has no name",
+			domain: "example.com",
+			want:   "test.example.com",
 		},
 		{
 			name: "no-magic-dns",
@@ -178,8 +264,11 @@ func TestNodeFQDN(t *testing.T) {
 					Name: "user",
 				},
 			},
-			dns: tailcfg.DNSConfig{
-				Proxied: false,
+			cfg: Config{
+				DNSConfig: &tailcfg.DNSConfig{
+					Proxied: false,
+				},
+				DNSUserNameInMagicDNS: false,
 			},
 			domain: "example.com",
 			want:   "test",
@@ -199,7 +288,7 @@ func TestNodeFQDN(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := tc.node.GetFQDN(&tc.dns, tc.domain)
+			got, err := tc.node.GetFQDN(&tc.cfg, tc.domain)
 
 			if (err != nil) && (err.Error() != tc.wantErr) {
 				t.Errorf("GetFQDN() error = %s, wantErr %s", err, tc.wantErr)
@@ -448,6 +537,56 @@ func TestApplyPeerChange(t *testing.T) {
 
 			if diff := cmp.Diff(tt.want, tt.nodeBefore, util.Comparers...); diff != "" {
 				t.Errorf("Patch unexpected result (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNodeRegisterMethodToV1Enum(t *testing.T) {
+	tests := []struct {
+		name string
+		node Node
+		want v1.RegisterMethod
+	}{
+		{
+			name: "authkey",
+			node: Node{
+				ID:             1,
+				RegisterMethod: util.RegisterMethodAuthKey,
+			},
+			want: v1.RegisterMethod_REGISTER_METHOD_AUTH_KEY,
+		},
+		{
+			name: "oidc",
+			node: Node{
+				ID:             1,
+				RegisterMethod: util.RegisterMethodOIDC,
+			},
+			want: v1.RegisterMethod_REGISTER_METHOD_OIDC,
+		},
+		{
+			name: "cli",
+			node: Node{
+				ID:             1,
+				RegisterMethod: util.RegisterMethodCLI,
+			},
+			want: v1.RegisterMethod_REGISTER_METHOD_CLI,
+		},
+		{
+			name: "unknown",
+			node: Node{
+				ID: 0,
+			},
+			want: v1.RegisterMethod_REGISTER_METHOD_UNSPECIFIED,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.node.RegisterMethodToV1Enum()
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("RegisterMethodToV1Enum() unexpected result (-want +got):\n%s", diff)
 			}
 		})
 	}

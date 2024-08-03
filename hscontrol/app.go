@@ -8,7 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	_ "net/http/pprof" //nolint
+	_ "net/http/pprof" // nolint
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -79,17 +79,13 @@ const (
 	registerCacheCleanup    = time.Minute * 20
 )
 
-// func init() {
-// 	deadlock.Opts.DeadlockTimeout = 15 * time.Second
-// 	deadlock.Opts.PrintAllCurrentGoroutines = true
-// }
-
 // Headscale represents the base app of the service.
 type Headscale struct {
 	cfg             *types.Config
 	db              *db.HSDatabase
 	ipAlloc         *db.IPAllocator
 	noisePrivateKey *key.MachinePrivate
+	ephemeralGC     *db.EphemeralGarbageCollector
 
 	DERPMap    *tailcfg.DERPMap
 	DERPServer *derpServer.DERPServer
@@ -151,6 +147,12 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	app.ephemeralGC = db.NewEphemeralGarbageCollector(func(ni types.NodeID) {
+		if err := app.db.DeleteEphemeralNode(ni); err != nil {
+			log.Err(err).Uint64("node.id", ni.Uint64()).Msgf("failed to delete ephemeral node")
+		}
+	})
 
 	if cfg.OIDC.Issuer != "" {
 		err = app.initOIDC()
@@ -214,47 +216,6 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 func (h *Headscale) redirect(w http.ResponseWriter, req *http.Request) {
 	target := h.cfg.ServerURL + req.URL.RequestURI()
 	http.Redirect(w, req, target, http.StatusFound)
-}
-
-// deleteExpireEphemeralNodes deletes ephemeral node records that have not been
-// seen for longer than h.cfg.EphemeralNodeInactivityTimeout.
-func (h *Headscale) deleteExpireEphemeralNodes(ctx context.Context, every time.Duration) {
-	ticker := time.NewTicker(every)
-
-	for {
-		select {
-		case <-ctx.Done():
-			ticker.Stop()
-			return
-		case <-ticker.C:
-			var removed []types.NodeID
-			var changed []types.NodeID
-			if err := h.db.Write(func(tx *gorm.DB) error {
-				removed, changed = db.DeleteExpiredEphemeralNodes(tx, h.cfg.EphemeralNodeInactivityTimeout)
-
-				return nil
-			}); err != nil {
-				log.Error().Err(err).Msg("database error while expiring ephemeral nodes")
-				continue
-			}
-
-			if removed != nil {
-				ctx := types.NotifyCtx(context.Background(), "expire-ephemeral", "na")
-				h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-					Type:    types.StatePeerRemoved,
-					Removed: removed,
-				})
-			}
-
-			if changed != nil {
-				ctx := types.NotifyCtx(context.Background(), "expire-ephemeral", "na")
-				h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-					Type:        types.StatePeerChanged,
-					ChangeNodes: changed,
-				})
-			}
-		}
-	}
 }
 
 // expireExpiredNodes expires nodes that have an explicit expiry set
@@ -516,6 +477,10 @@ func (h *Headscale) Serve() error {
 
 	var err error
 
+	if err = h.loadACLPolicy(); err != nil {
+		return fmt.Errorf("failed to load ACL policy: %w", err)
+	}
+
 	if dumpConfig {
 		spew.Dump(h.cfg)
 	}
@@ -552,9 +517,18 @@ func (h *Headscale) Serve() error {
 		return errEmptyInitialDERPMap
 	}
 
-	expireEphemeralCtx, expireEphemeralCancel := context.WithCancel(context.Background())
-	defer expireEphemeralCancel()
-	go h.deleteExpireEphemeralNodes(expireEphemeralCtx, updateInterval)
+	// Start ephemeral node garbage collector and schedule all nodes
+	// that are already in the database and ephemeral. If they are still
+	// around between restarts, they will reconnect and the GC will
+	// be cancelled.
+	go h.ephemeralGC.Start()
+	ephmNodes, err := h.db.ListEphemeralNodes()
+	if err != nil {
+		return fmt.Errorf("failed to list ephemeral nodes: %w", err)
+	}
+	for _, node := range ephmNodes {
+		h.ephemeralGC.Schedule(node.ID, h.cfg.EphemeralNodeInactivityTimeout)
+	}
 
 	expireNodeCtx, expireNodeCancel := context.WithCancel(context.Background())
 	defer expireNodeCancel()
@@ -705,7 +679,7 @@ func (h *Headscale) Serve() error {
 		Handler:     router,
 		ReadTimeout: types.HTTPTimeout,
 
-		// Long polling should not have any timeout, this is overriden
+		// Long polling should not have any timeout, this is overridden
 		// further down the chain
 		WriteTimeout: types.HTTPTimeout,
 	}
@@ -784,17 +758,12 @@ func (h *Headscale) Serve() error {
 					Msg("Received SIGHUP, reloading ACL and Config")
 
 				// TODO(kradalby): Reload config on SIGHUP
+				if err := h.loadACLPolicy(); err != nil {
+					log.Error().Err(err).Msg("failed to reload ACL policy")
+				}
 
-				if h.cfg.ACL.PolicyPath != "" {
-					aclPath := util.AbsolutePathFromConfigPath(h.cfg.ACL.PolicyPath)
-					pol, err := policy.LoadACLPolicyFromPath(aclPath)
-					if err != nil {
-						log.Error().Err(err).Msg("Failed to reload ACL policy")
-					}
-
-					h.ACLPolicy = pol
+				if h.ACLPolicy != nil {
 					log.Info().
-						Str("path", aclPath).
 						Msg("ACL policy successfully reloaded, notifying nodes of change")
 
 					ctx := types.NotifyCtx(context.Background(), "acl-sighup", "na")
@@ -802,7 +771,6 @@ func (h *Headscale) Serve() error {
 						Type: types.StateFullUpdate,
 					})
 				}
-
 			default:
 				trace := log.Trace().Msgf
 				log.Info().
@@ -810,7 +778,7 @@ func (h *Headscale) Serve() error {
 					Msg("Received signal to stop, shutting down gracefully")
 
 				expireNodeCancel()
-				expireEphemeralCancel()
+				h.ephemeralGC.Close()
 
 				trace("waiting for netmap stream to close")
 				h.pollNetMapStreamWG.Wait()
@@ -1011,4 +979,49 @@ func readOrCreatePrivateKey(path string) (*key.MachinePrivate, error) {
 	}
 
 	return &machineKey, nil
+}
+
+func (h *Headscale) loadACLPolicy() error {
+	var (
+		pol *policy.ACLPolicy
+		err error
+	)
+
+	switch h.cfg.Policy.Mode {
+	case types.PolicyModeFile:
+		path := h.cfg.Policy.Path
+
+		// It is fine to start headscale without a policy file.
+		if len(path) == 0 {
+			return nil
+		}
+
+		absPath := util.AbsolutePathFromConfigPath(path)
+		pol, err = policy.LoadACLPolicyFromPath(absPath)
+		if err != nil {
+			return fmt.Errorf("failed to load ACL policy from file: %w", err)
+		}
+	case types.PolicyModeDB:
+		p, err := h.db.GetPolicy()
+		if err != nil {
+			if errors.Is(err, types.ErrPolicyNotFound) {
+				return nil
+			}
+
+			return fmt.Errorf("failed to get policy from database: %w", err)
+		}
+
+		pol, err = policy.LoadACLPolicyFromBytes([]byte(p.Data))
+		if err != nil {
+			return fmt.Errorf("failed to parse policy: %w", err)
+		}
+	default:
+		log.Fatal().
+			Str("mode", string(h.cfg.Policy.Mode)).
+			Msg("Unknown ACL policy mode")
+	}
+
+	h.ACLPolicy = pol
+
+	return nil
 }

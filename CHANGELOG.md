@@ -40,6 +40,12 @@ after improving the test harness as part of adopting [#1460](https://github.com/
 - Prefixes are now defined per v4 and v6 range. [#1756](https://github.com/juanfont/headscale/pull/1756)
   - `ip_prefixes` option is now `prefixes.v4` and `prefixes.v6`
   - `prefixes.allocation` can be set to assign IPs at `sequential` or `random`. [#1869](https://github.com/juanfont/headscale/pull/1869)
+- MagicDNS domains no longer contain usernames []()
+  - This is in preperation to fix Headscales implementation of tags which currently does not correctly remove the link between a tagged device and a user. As tagged devices will not have a user, this will require a change to the DNS generation, removing the username, see [#1369](https://github.com/juanfont/headscale/issues/1369) for more information.
+  - `use_username_in_magic_dns` can be used to turn this behaviour on again, but note that this option _will be removed_ when tags are fixed.
+  - This option brings Headscales behaviour in line with Tailscale.
+- YAML files are no longer supported for headscale policy.  [#1792](https://github.com/juanfont/headscale/pull/1792)
+  - HuJSON is now the only supported format for policy.
 
 ### Changes
 
@@ -58,6 +64,9 @@ after improving the test harness as part of adopting [#1460](https://github.com/
 - Log available update as warning [#1877](https://github.com/juanfont/headscale/pull/1877)
 - Add `autogroup:internet` to Policy [#1917](https://github.com/juanfont/headscale/pull/1917)
 - Restore foreign keys and add constraints [#1562](https://github.com/juanfont/headscale/pull/1562)
+- Make registration page easier to use on mobile devices
+- Make write-ahead-log default on and configurable for SQLite [#1985](https://github.com/juanfont/headscale/pull/1985)
+- Add APIs for managing headscale policy. [#1792](https://github.com/juanfont/headscale/pull/1792)
 
 ## 0.22.3 (2023-05-12)
 

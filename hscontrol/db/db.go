@@ -13,13 +13,12 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/go-gormigrate/gormigrate/v2"
+	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-
-	"github.com/juanfont/headscale/hscontrol/types"
-	"github.com/juanfont/headscale/hscontrol/util"
 )
 
 var errDatabaseNotSupported = errors.New("database type not supported")
@@ -331,7 +330,7 @@ func NewHeadscaleDatabase(
 				// IP v4 and v6 column.
 				// Note that previously, the list _could_ contain more
 				// than two addresses, which should not really happen.
-				// In that case, the first occurence of each type will
+				// In that case, the first occurrence of each type will
 				// be kept.
 				ID: "2024041121742",
 				Migrate: func(tx *gorm.DB) error {
@@ -395,6 +394,18 @@ func NewHeadscaleDatabase(
 					return nil
 				},
 			},
+			{
+				ID: "202406021630",
+				Migrate: func(tx *gorm.DB) error {
+					err := tx.AutoMigrate(&types.Policy{})
+					if err != nil {
+						return err
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 		},
 	)
 
@@ -434,13 +445,29 @@ func openDB(cfg types.DatabaseConfig) (*gorm.DB, error) {
 			Msg("Opening database")
 
 		db, err := gorm.Open(
-			sqlite.Open(cfg.Sqlite.Path+"?_synchronous=1&_journal_mode=WAL"),
+			sqlite.Open(cfg.Sqlite.Path),
 			&gorm.Config{
 				Logger: dbLogger,
 			},
 		)
 
-		db.Exec("PRAGMA foreign_keys=ON")
+		if err := db.Exec(`
+			PRAGMA foreign_keys=ON;
+			PRAGMA busy_timeout=10000;
+			PRAGMA auto_vacuum=INCREMENTAL;
+			PRAGMA synchronous=NORMAL;
+			`).Error; err != nil {
+			return nil, fmt.Errorf("enabling foreign keys: %w", err)
+		}
+
+		if cfg.Sqlite.WriteAheadLog {
+			if err := db.Exec(`
+				PRAGMA journal_mode=WAL;
+				PRAGMA wal_autocheckpoint=0;
+				`).Error; err != nil {
+				return nil, fmt.Errorf("setting WAL mode: %w", err)
+			}
+		}
 
 		// The pure Go SQLite library does not handle locking in
 		// the same way as the C based one and we cant use the gorm
