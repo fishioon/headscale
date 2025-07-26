@@ -16,11 +16,7 @@ builds:
     env:
       - CGO_ENABLED=0
     targets:
-      - darwin_amd64
-      - darwin_arm64
-      - freebsd_amd64
       - linux_amd64
-      - linux_arm64
     flags:
       - -mod=readonly
     ldflags:
@@ -43,61 +39,11 @@ source:
   files:
     - "vendor/"
 
-nfpms:
-  # Configure nFPM for .deb and .rpm releases
-  #
-  # See https://nfpm.goreleaser.com/configuration/
-  # and https://goreleaser.com/customization/nfpm/
-  #
-  # Useful tools for debugging .debs:
-  # List file contents: dpkg -c dist/headscale...deb
-  # Package metadata: dpkg --info dist/headscale....deb
-  #
-  - ids:
-      - headscale
-    package_name: headscale
-    priority: optional
-    vendor: headscale
-    maintainer: Kristoffer Dalby <kristoffer@dalby.cc>
-    homepage: https://github.com/juanfont/headscale
-    description: |-
-      Open source implementation of the Tailscale control server.
-      Headscale aims to implement a self-hosted, open source alternative to the
-      Tailscale control server. Headscale's goal is to provide self-hosters and
-      hobbyists with an open-source server they can use for their projects and
-      labs. It implements a narrow scope, a single Tailscale network (tailnet),
-      suitable for a personal use, or a small open-source organisation.
-    bindir: /usr/bin
-    section: net
-    formats:
-      - deb
-    contents:
-      - src: ./config-example.yaml
-        dst: /etc/headscale/config.yaml
-        type: config|noreplace
-        file_info:
-          mode: 0644
-      - src: ./packaging/systemd/headscale.service
-        dst: /usr/lib/systemd/system/headscale.service
-      - dst: /var/lib/headscale
-        type: dir
-      - src: LICENSE
-        dst: /usr/share/doc/headscale/copyright
-    scripts:
-      postinstall: ./packaging/deb/postinst
-      postremove: ./packaging/deb/postrm
-      preremove: ./packaging/deb/prerm
-    deb:
-      lintian_overrides:
-        - no-changelog # Our CHANGELOG.md uses a different formatting
-        - no-manual-page
-        - statically-linked-binary
-
 kos:
   - id: ghcr
     repositories:
-      - ghcr.io/juanfont/headscale
-      - headscale/headscale
+      - ghcr.io/fishioon/headscale
+      - fishioon/headscale
 
     # bare tells KO to only use the repository
     # for tagging and naming the container.
@@ -109,7 +55,6 @@ kos:
       - CGO_ENABLED=0
     platforms:
       - linux/amd64
-      - linux/arm64
     tags:
       - "{{ if not .Prerelease }}latest{{ end }}"
       - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}.{{ .Patch }}{{ end }}"
@@ -125,8 +70,8 @@ kos:
 
   - id: ghcr-debug
     repositories:
-      - ghcr.io/juanfont/headscale
-      - headscale/headscale
+      - ghcr.io/fishioon/headscale
+      - fishioon/headscale
 
     bare: true
     base_image: gcr.io/distroless/base-debian12:debug
@@ -136,7 +81,6 @@ kos:
       - CGO_ENABLED=0
     platforms:
       - linux/amd64
-      - linux/arm64
     tags:
       - "{{ if not .Prerelease }}latest-debug{{ end }}"
       - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}.{{ .Patch }}-debug{{ end }}"
