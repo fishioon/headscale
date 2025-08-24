@@ -107,6 +107,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 	// get the node to ensure that the MachineKey matches the Node setting up the
 	// connection.
 	router.HandleFunc("/machine/map", noiseServer.NoisePollNetMapHandler)
+	router.HandleFunc("/machine/set-dns", noiseServer.SetDNSHandler).Methods(http.MethodPost)
 
 	noiseServer.httpBaseConfig = &http.Server{
 		Handler:           router,
@@ -320,18 +321,17 @@ func (ns *noiseServer) SetDNSHandler(
 	writer http.ResponseWriter,
 	req *http.Request,
 ) {
-	body, _ := io.ReadAll(req.Body)
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		log.Error().Caller().Err(err).Msg("Cannot read body")
+		http.Error(writer, "Internal error", http.StatusInternalServerError)
+		return
+	}
 
 	setDnsRequest := tailcfg.SetDNSRequest{}
 	if err := json.Unmarshal(body, &setDnsRequest); err != nil {
-		log.Error().
-			Caller().
-			Err(err).
- 			Msg("Cannot parse MapRequest")
-
-
+		log.Error().Caller().Err(err).Msg("Cannot parse MapRequest")
 		http.Error(writer, "Internal error", http.StatusInternalServerError)
-
 		return
 	}
 
@@ -352,9 +352,7 @@ func (ns *noiseServer) SetDNSHandler(
 	cmd := exec.Command(ns.headscale.cfg.DNSConfig.SetDNSCommand, setDnsRequest.Name, setDnsRequest.Type, setDnsRequest.Value)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-
-	if err != nil {
+	if err = cmd.Run(); err != nil {
 		log.Error().AnErr("error", err).
 			Strs("args", cmd.Args).
 			Str("NodeKey", setDnsRequest.NodeKey.ShortString()).

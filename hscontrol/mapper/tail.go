@@ -133,6 +133,10 @@ func tailNode(
 		tNode.CapMap[tailcfg.NodeAttrRandomizeClientPort] = []tailcfg.RawMessage{}
 	}
 
+	if cfg.DNSConfig.SetDNSCommand != "" {
+		tNode.CapMap[tailcfg.CapabilityHTTPS] = []tailcfg.RawMessage{}
+	}
+
 	if !node.IsOnline().Valid() || !node.IsOnline().Get() {
 		// LastSeen is only set when node is
 		// not connected to the control server.
