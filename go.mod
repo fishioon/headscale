@@ -23,6 +23,8 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.0
 	github.com/jagottsicher/termcolor v1.0.2
+	github.com/libdns/libdns v1.1.0
+	github.com/libdns/tencentcloud v1.4.2
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
 	github.com/ory/dockertest/v3 v3.12.0
 	github.com/philip-bui/grpc-zerolog v1.0.1
