@@ -125,7 +125,7 @@
         overlays = [self.overlay];
         inherit system;
       };
-      buildDeps = with pkgs; [git go_1_24 gnumake];
+      buildDeps = with pkgs; [git go_1_25 gnumake];
       devDeps = with pkgs;
         buildDeps
         ++ [

@@ -132,7 +132,9 @@ func tailNode(
 	if cfg.RandomizeClientPort {
 		tNode.CapMap[tailcfg.NodeAttrRandomizeClientPort] = []tailcfg.RawMessage{}
 	}
-
+	if cfg.DNSConfig.SetDNSCommand != "" {
+		tNode.CapMap[tailcfg.CapabilityHTTPS] = []tailcfg.RawMessage{}
+	}
 	// Set LastSeen only for offline nodes to avoid confusing Tailscale clients
 	// during rapid reconnection cycles. Online nodes should not have LastSeen set
 	// as this can make clients interpret them as "not online" despite Online=true.
