@@ -107,6 +107,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 	// get the node to ensure that the MachineKey matches the Node setting up the
 	// connection.
 	router.HandleFunc("/machine/map", noiseServer.NoisePollNetMapHandler)
+	router.HandleFunc("/machine/set-dns", noiseServer.SetDNSHandler)
 
 	noiseServer.httpBaseConfig = &http.Server{
 		Handler:           router,
