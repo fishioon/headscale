@@ -101,6 +101,7 @@ type Config struct {
 }
 
 type DNSConfig struct {
+	SetDNSCommand    string `mapstructure:"set_dns_command"`
 	MagicDNS         bool   `mapstructure:"magic_dns"`
 	BaseDomain       string `mapstructure:"base_domain"`
 	OverrideLocalDNS bool   `mapstructure:"override_local_dns"`
@@ -634,6 +635,7 @@ func dns() (DNSConfig, error) {
 	// 	return DNSConfig{}, fmt.Errorf("unmarshalling dns config: %w", err)
 	// }
 
+	dns.SetDNSCommand = viper.GetString("dns.set_dns_command")
 	dns.MagicDNS = viper.GetBool("dns.magic_dns")
 	dns.BaseDomain = viper.GetString("dns.base_domain")
 	dns.OverrideLocalDNS = viper.GetBool("dns.override_local_dns")
